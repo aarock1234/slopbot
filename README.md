@@ -92,6 +92,27 @@ the pull request up to date, and fails the check when the score is over `failThr
 syntax rules only. Inputs: `base`, `judge`, `openrouter-api-key`, `openai-api-key`, `comment`, `fail-on-threshold`,
 `version`. Outputs: `score`, `grade`.
 
+To run it on demand, comment `@slopbot` or `/slopbot` on a pull request. That needs an `issue_comment` trigger next to
+`pull_request` and a guard so only people with write access can start a run that uses the repository's secrets:
+
+```yaml
+on:
+    pull_request:
+    issue_comment:
+        types: [created]
+
+jobs:
+    slop:
+        if: >-
+            github.event_name == 'pull_request' ||
+            (github.event.issue.pull_request &&
+             (contains(github.event.comment.body, '@slopbot') || contains(github.event.comment.body, '/slopbot')) &&
+             contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+```
+
+The Action reacts to the comment with eyes, checks out that pull request's head, and posts the report as usual.
+`@slopbot` also notifies whoever owns that GitHub handle; `/slopbot` does not.
+
 Judge results are cached by content under `.slopbot-cache`, so re-running the same commit costs nothing.
 
 ## What leaves your machine

@@ -8,8 +8,8 @@ branding:
 
 inputs:
     base:
-        description: Branch to diff against. Defaults to the pull request base.
-        default: ${{ github.base_ref }}
+        description: Branch to diff against. Defaults to the pull request's base branch.
+        default: ''
     judge:
         description: Run the LLM judge. Needs openrouter-api-key or openai-api-key; otherwise syntax rules only.
         default: 'true'
@@ -40,6 +40,59 @@ outputs:
 runs:
     using: composite
     steps:
+        # a comment-triggered run acts with the repository's secrets, so only people who could push here may ask
+        - name: Check who asked
+          if: github.event_name == 'issue_comment'
+          shell: bash
+          env:
+              ASSOCIATION: ${{ github.event.comment.author_association }}
+          run: |
+              case "$ASSOCIATION" in
+                OWNER|MEMBER|COLLABORATOR) ;;
+                *) echo "refusing @slopbot from $ASSOCIATION: write access required" >&2; exit 1 ;;
+              esac
+
+        - name: Acknowledge the request
+          if: github.event_name == 'issue_comment'
+          shell: bash
+          env:
+              GH_TOKEN: ${{ github.token }}
+          run: |
+              gh api --method POST "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+                -f content=eyes > /dev/null
+
+        - name: Locate the pull request
+          id: pr
+          shell: bash
+          env:
+              GH_TOKEN: ${{ github.token }}
+              NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+              BASE_INPUT: ${{ inputs.base }}
+              BASE_REF: ${{ github.base_ref }}
+          run: |
+              set -euo pipefail
+              base="${BASE_INPUT:-$BASE_REF}"
+
+              if [ -n "$NUMBER" ]; then
+                if [ -z "$base" ]; then
+                  base=$(gh pr view "$NUMBER" --repo "${{ github.repository }}" --json baseRefName --jq .baseRefName)
+                fi
+                # a comment run starts on the default branch; move to the pull request's head
+                if [ "${{ github.event_name }}" = "issue_comment" ]; then
+                  git fetch --no-tags origin "pull/$NUMBER/head:slopbot-head"
+                  git checkout -q slopbot-head
+                fi
+              fi
+
+              if [ -z "$base" ]; then
+                echo "no base branch: pass the base input when not running on a pull request" >&2
+                exit 2
+              fi
+
+              echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+              echo "base=$base" >> "$GITHUB_OUTPUT"
+              echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
         - name: Setup Node.js
           uses: actions/setup-node@v6
           with:
@@ -50,7 +103,7 @@ runs:
           uses: actions/cache@v4
           with:
               path: .slopbot-cache
-              key: slopbot-${{ github.repository }}-${{ github.event.pull_request.head.sha || github.sha }}
+              key: slopbot-${{ github.repository }}-${{ steps.pr.outputs.head }}
               restore-keys: slopbot-${{ github.repository }}-
 
         - name: Scan
@@ -59,9 +112,10 @@ runs:
           env:
               OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
               OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+              BASE: ${{ steps.pr.outputs.base }}
           run: |
               set -uo pipefail
-              git fetch --no-tags --depth=1 origin "${{ inputs.base }}"
+              git fetch --no-tags origin "$BASE"
 
               judge_flag=""
               if [ "${{ inputs.judge }}" != "true" ] || { [ -z "$OPENROUTER_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; }; then
@@ -70,7 +124,7 @@ runs:
 
               set +e
               npx --yes "@aarock1234/slopbot@${{ inputs.version }}" scan \
-                --base "origin/${{ inputs.base }}" --head HEAD \
+                --base "origin/$BASE" --head HEAD \
                 --format markdown --json-out slopbot-report.json $judge_flag > slopbot-report.md
               status=$?
               set -e
@@ -92,11 +146,11 @@ runs:
               path: slopbot-report.json
 
         - name: Comment on the pull request
-          if: inputs.comment == 'true' && github.event_name == 'pull_request'
+          if: inputs.comment == 'true' && steps.pr.outputs.number != ''
           shell: bash
           env:
               GH_TOKEN: ${{ github.token }}
-              PR: ${{ github.event.pull_request.number }}
+              PR: ${{ steps.pr.outputs.number }}
           run: |
               set -euo pipefail
               marker="<!-- slopbot -->"
@@ -108,7 +162,7 @@ runs:
               if [ -n "$existing" ]; then
                 gh api --method PATCH "repos/${{ github.repository }}/issues/comments/$existing" -F body=@slopbot-comment.md > /dev/null
               else
-                gh pr comment "$PR" --body-file slopbot-comment.md
+                gh pr comment "$PR" --repo "${{ github.repository }}" --body-file slopbot-comment.md
               fi
 
         - name: Enforce threshold

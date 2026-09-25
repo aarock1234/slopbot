@@ -2,6 +2,8 @@ name: slopbot
 
 on:
     pull_request:
+    issue_comment:
+        types: [created]
 
 permissions:
     contents: read
@@ -9,6 +11,12 @@ permissions:
 
 jobs:
     slop:
+        # every pull request, plus any pull request where someone with write access asks for it
+        if: >-
+            github.event_name == 'pull_request' ||
+            (github.event.issue.pull_request &&
+             (contains(github.event.comment.body, '@slopbot') || contains(github.event.comment.body, '/slopbot')) &&
+             contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
         runs-on: ubuntu-latest
         steps:
             - name: Checkout
