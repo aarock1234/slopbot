@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+coverage/
+*.tsbuildinfo
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# slopbot
+.slopbot-cache/
+
+# os
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+
+# debug
+*.log
+
+# AI
+.claude/
+
+# rule drafts awaiting review
+drafts/

@@ -1,0 +1,32 @@
+# ranges in local repositories with the grade a careful reviewer would give them. run with
+#   pnpm script scripts/calibrate.ts
+# paths are relative to this project. expectations are proposals from a first read; correct them
+# freely, then tune the constants in .slopbot.yml until the table is all hits.
+
+ranges:
+    - name: betty recent web work
+      repo: ../betty
+      base: HEAD~8
+      head: HEAD
+      expect: A-B
+      note: routine feature work; a few any-typed api shapes and nested ternaries in components
+
+    - name: camrelay recent
+      repo: ../camrelay
+      base: HEAD~8
+      head: HEAD
+      expect: A-B
+      note: electron app; promise chains in the main process
+
+    - name: autobot-go recent
+      repo: ../autobot-go
+      base: HEAD~8
+      head: HEAD
+      expect: A
+      note: mature go codebase, small recent diffs
+
+    - name: ai-sdk-go recent
+      repo: ../ai-sdk-go
+      base: HEAD~4
+      head: HEAD
+      expect: A-B

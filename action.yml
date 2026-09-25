@@ -1,0 +1,119 @@
+name: slopbot
+description: Scores a pull request for slop - hacky, non-idiomatic, non-future-proof TypeScript and Go - and posts the report.
+author: aarock1234
+
+branding:
+    icon: alert-octagon
+    color: orange
+
+inputs:
+    base:
+        description: Branch to diff against. Defaults to the pull request base.
+        default: ${{ github.base_ref }}
+    judge:
+        description: Run the LLM judge. Needs openrouter-api-key or openai-api-key; otherwise syntax rules only.
+        default: 'true'
+    openrouter-api-key:
+        description: OpenRouter key for the judge.
+        default: ''
+    openai-api-key:
+        description: OpenAI key for the judge.
+        default: ''
+    comment:
+        description: Post or update one sticky comment on the pull request.
+        default: 'true'
+    fail-on-threshold:
+        description: Fail the check when the score is above failThreshold in .slopbot.yml.
+        default: 'true'
+    version:
+        description: Version of the npm package to run.
+        default: latest
+
+outputs:
+    score:
+        description: Overall slop score, 0 to 100.
+        value: ${{ steps.scan.outputs.score }}
+    grade:
+        description: Letter grade A to F.
+        value: ${{ steps.scan.outputs.grade }}
+
+runs:
+    using: composite
+    steps:
+        - name: Setup Node.js
+          uses: actions/setup-node@v6
+          with:
+              node-version: 24
+
+        - name: Restore judge cache
+          if: inputs.judge == 'true'
+          uses: actions/cache@v4
+          with:
+              path: .slopbot-cache
+              key: slopbot-${{ github.repository }}-${{ github.event.pull_request.head.sha || github.sha }}
+              restore-keys: slopbot-${{ github.repository }}-
+
+        - name: Scan
+          id: scan
+          shell: bash
+          env:
+              OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
+              OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+          run: |
+              set -uo pipefail
+              git fetch --no-tags --depth=1 origin "${{ inputs.base }}"
+
+              judge_flag=""
+              if [ "${{ inputs.judge }}" != "true" ] || { [ -z "$OPENROUTER_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; }; then
+                judge_flag="--no-judge"
+              fi
+
+              set +e
+              npx --yes "@aarock1234/slopbot@${{ inputs.version }}" scan \
+                --base "origin/${{ inputs.base }}" --head HEAD \
+                --format markdown --json-out slopbot-report.json $judge_flag > slopbot-report.md
+              status=$?
+              set -e
+
+              if [ "$status" -eq 2 ]; then
+                echo "slopbot failed to run" >&2
+                exit 2
+              fi
+
+              cat slopbot-report.md >> "$GITHUB_STEP_SUMMARY"
+              echo "score=$(node -p "JSON.parse(require('fs').readFileSync('slopbot-report.json','utf8')).overall")" >> "$GITHUB_OUTPUT"
+              echo "grade=$(node -p "JSON.parse(require('fs').readFileSync('slopbot-report.json','utf8')).grade")" >> "$GITHUB_OUTPUT"
+              echo "status=$status" >> "$GITHUB_OUTPUT"
+
+        - name: Upload report
+          uses: actions/upload-artifact@v4
+          with:
+              name: slopbot-report
+              path: slopbot-report.json
+
+        - name: Comment on the pull request
+          if: inputs.comment == 'true' && github.event_name == 'pull_request'
+          shell: bash
+          env:
+              GH_TOKEN: ${{ github.token }}
+              PR: ${{ github.event.pull_request.number }}
+          run: |
+              set -euo pipefail
+              marker="<!-- slopbot -->"
+              { echo "$marker"; cat slopbot-report.md; } > slopbot-comment.md
+
+              existing=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" --paginate \
+                --jq "[.[] | select(.body | startswith(\"$marker\"))][0].id // empty")
+
+              if [ -n "$existing" ]; then
+                gh api --method PATCH "repos/${{ github.repository }}/issues/comments/$existing" -F body=@slopbot-comment.md > /dev/null
+              else
+                gh pr comment "$PR" --body-file slopbot-comment.md
+              fi
+
+        - name: Enforce threshold
+          if: inputs.fail-on-threshold == 'true' && steps.scan.outputs.status == '1'
+          shell: bash
+          run: |
+              echo "slop score ${{ steps.scan.outputs.score }} (${{ steps.scan.outputs.grade }}) is over the fail threshold" >&2
+              exit 1

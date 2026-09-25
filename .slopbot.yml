@@ -1,0 +1,33 @@
+# slopbot scans itself. every key is optional; these are the defaults, spelled out as documentation.
+
+# added to the built-in ignore list (node_modules, dist, vendor, generated files, lockfiles)
+ignore: []
+
+# rule id -> false to disable; anything not listed is on
+rules: {}
+
+# exit 1 when the overall score is above this
+failThreshold: 45
+
+judge:
+    model: openrouter/openai/gpt-6-sol
+    maxInputTokens: 500000
+    minChangedLines: 3
+    chunkTokens: 6000
+    minConfidence: 0.6
+    maxOutputTokens: 2000
+    timeoutMs: 90000
+
+scoring:
+    points:
+        info: 1
+        minor: 3
+        major: 8
+        critical: 20
+    damping: 0.5
+    densityScale: 12
+    axisWeights:
+        idiom: 0.25
+        hacky: 0.4
+        futureproof: 0.35
+    minScoredLines: 50
