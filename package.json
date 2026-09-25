@@ -24,7 +24,7 @@
 	},
 	"packageManager": "pnpm@12.4.1",
 	"bin": {
-		"slopbot": "./dist/cli.js"
+		"slopbot": "dist/cli.js"
 	},
 	"files": [
 		"dist",
